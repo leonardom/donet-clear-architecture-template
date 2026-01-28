@@ -1,0 +1,75 @@
+trigger:
+- master
+
+pool:
+  vmImage: 'ubuntu-latest' # or 'windows-latest'
+
+variables:
+  buildConfiguration: 'Release'
+  # Replace 'your-app-service-name' with the actual name of your Azure App Service
+  azureAppServiceName: 'your-dev-app-service-name' 
+  # Replace 'your-azure-service-connection' with the name of your Azure DevOps Service Connection
+  azureServiceConnection: 'your-azure-service-connection'
+
+stages:
+- stage: Build
+  displayName: 'Build and Publish Artifacts'
+  jobs:
+  - job: BuildJob
+    steps:
+    - task: DotNetCoreCLI@2
+      displayName: 'Restore'
+      inputs:
+        command: 'restore'
+        projects: '**/*.csproj'
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Build'
+      inputs:
+        command: 'build'
+        projects: '**/*.csproj'
+        arguments: '--configuration $(buildConfiguration)'
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Publish'
+      inputs:
+        command: 'publish'
+        projects: '**/*.csproj'
+        arguments: '--configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)/output'
+        publishWebProjects: false # Set to true if you want to publish web projects automatically
+
+    - publish: $(Build.ArtifactStagingDirectory)/output
+      artifact: drop
+      displayName: 'Publish Build Artifact'
+
+- stage: Test
+  displayName: 'Run Tests'
+  dependsOn: Build
+  jobs:
+  - job: TestJob
+    steps:
+    - task: DotNetCoreCLI@2
+      displayName: 'Run Tests'
+      inputs:
+        command: 'test'
+        projects: '**/*Tests.csproj' # Targets only test projects
+        arguments: '--configuration $(buildConfiguration)'
+
+- stage: DeployToDev
+  displayName: 'Deploy to Dev Environment'
+  dependsOn: Test # Only runs if the Test stage succeeds
+  condition: succeeded()
+  jobs:
+  - job: DeployDev
+    steps:
+    - download: current
+      artifact: drop
+      displayName: 'Download Artifact'
+
+    - task: AzureWebApp@1
+      displayName: 'Azure Web App Deploy: $(azureAppServiceName)'
+      inputs:
+        azureSubscription: '$(azureServiceConnection)'
+        appType: 'webAppLinux' # or 'webApp' for Windows
+        appName: '$(azureAppServiceName)'
+        package: '$(Pipeline.Workspace)/drop/output.zip' # Path to the published artifact
